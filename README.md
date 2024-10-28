@@ -11,3 +11,7 @@ if err != nil {
 }
 ipNet, info, err := db.SearchIP(ip)
 ```
+
+> 格式转换:
+> https://github.com/qiniu/uip
+> https://github.com/sjzar/ips
