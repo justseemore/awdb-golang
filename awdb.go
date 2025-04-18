@@ -15,11 +15,11 @@ import (
 )
 
 // AWDB文件特征值
-//var awDataMarker = []byte("\\u57c3\\u6587\\u79d1\\u6280")
+// var awDataMarker = []byte("\\u57c3\\u6587\\u79d1\\u6280")
 
-// AwdbReader 保存着 awDB 文件对应的数据
+// awdbReader 保存着 awDB 文件对应的数据
 // 它唯一的公共字段是 awData，其中包含来自 awDB 文件的元数据
-type AwdbReader struct {
+type awdbReader struct {
 	hasMappedFile bool
 	buffer        []byte
 	awData        awMetaData
@@ -56,7 +56,7 @@ const (
 type intTypeData int
 
 // Openfile 打开文件，加载到内存，返回一个reader对象
-func Openfile(file string) (*AwdbReader, error) {
+func Openfile(file string) (*awdbReader, error) {
 	f, err := os.Open(file)
 	if err != nil {
 		return nil, err
@@ -83,7 +83,7 @@ func Openfile(file string) (*AwdbReader, error) {
 }
 
 // ReadBytes 获取对应于 awDB 文件的字节切片并返回 Reader对象或错误。
-func ReadBytes(buffer []byte) (*AwdbReader, error) {
+func ReadBytes(buffer []byte) (*awdbReader, error) {
 	// 获取metadata长度值字节切片
 	metaDataLenByte := buffer[:2]
 	metaDataLen := bytesToIntU(metaDataLenByte)
@@ -100,10 +100,10 @@ func ReadBytes(buffer []byte) (*AwdbReader, error) {
 	}
 	// 根据metadata内容，得到node_count值
 	NodeCount := metadata.Node_Count
-	//fmt.Println(metadata.Decode_Type)
+	// fmt.Println(metadata.Decode_Type)
 	base_offset := NodeCount*metadata.Byte_Len*2 + dataSectionStart
 
-	reader := &AwdbReader{
+	reader := &awdbReader{
 		buffer:     buffer,
 		awData:     metadata,
 		startLen:   dataSectionStart,
@@ -113,26 +113,18 @@ func ReadBytes(buffer []byte) (*AwdbReader, error) {
 }
 
 // SearchIP 获取IP索引，解析信息
-func (r *AwdbReader) SearchIP(ipaddress string) (*net.IPNet, map[string]interface{}, error) {
+func (r *awdbReader) SearchIP(ipaddress string) (error, map[string]interface{}) {
 	if r.buffer == nil {
-		return nil, nil, errors.New("cannot call Lookup on a closed database")
+		return errors.New("cannot call Lookup on a closed database"), nil
 	}
 	ip := handleIP(ipaddress)
 	// 获取IP索引
-	pointer, prefixLength, err := r.searchIPPointer(ip)
-
-	network := r.cidr(ip.To4(), prefixLength)
+	pointer, err := r.searchIPPointer(ip)
 	if pointer == 0 || err != nil {
-		return network, nil, err
+		return err, nil
 	}
 	// 根据IP索引解析信息
-	m, err1 := r.getData(pointer)
-	return network, m, err1
-}
-
-func (r *AwdbReader) cidr(ip net.IP, prefixLength int) *net.IPNet {
-	mask := net.CIDRMask(prefixLength, len(ip)*8)
-	return &net.IPNet{IP: ip.Mask(mask), Mask: mask}
+	return r.getData(pointer)
 }
 
 // handleIP 处理输入文本，转换成net.IP类型
@@ -158,22 +150,22 @@ func handleIP(ipaddress string) net.IP {
 }
 
 // 解析索引，获取信息，返回到result
-func (r *AwdbReader) getData(pointer uint) (map[string]interface{}, error) {
+func (r *awdbReader) getData(pointer uint) (error, map[string]interface{}) {
 	offset, err := r.getDataPointer(pointer)
 	if err != nil {
-		return nil, err
+		return err, nil
 	}
 	// 根据不同Decode_Type进行不同的数据解析方式处理，后期可拓展
 	switch r.awData.Decode_Type {
 	case 1:
 		resDone, _, errs := r.readDecode(offset)
 		if errs != nil {
-			return nil, errs
+			return errs, nil
 		}
 		keys := r.awData.Columns
 		values := resDone.([]interface{})
 		res := MapKeyValue(keys, values)
-		return res, nil
+		return nil, res
 	case 2:
 		dataLen := bytesToIntU(r.buffer[offset : offset+4])
 		offset += 4
@@ -183,14 +175,14 @@ func (r *AwdbReader) getData(pointer uint) (map[string]interface{}, error) {
 		for i, value := range r.awData.Columns {
 			res[value.(string)] = tempList[i]
 		}
-		return res, nil
+		return nil, res
 	default:
-		return nil, newfailDatabaseError("unknown decodetype: %d", r.awData.Decode_Type)
+		return newfailDatabaseError("unknown decodetype: %d", r.awData.Decode_Type), nil
 	}
 }
 
 // 根据索引值获取数据offset
-func (r *AwdbReader) getDataPointer(pointer uint) (uint, error) {
+func (r *awdbReader) getDataPointer(pointer uint) (uint, error) {
 	resolved := r.baseOffset + pointer - r.awData.Node_Count - 10
 	if resolved >= uint(len(r.buffer)) {
 		return 0, newfailDatabaseError("the aw DB file's search tree is corrupt")
@@ -199,7 +191,7 @@ func (r *AwdbReader) getDataPointer(pointer uint) (uint, error) {
 }
 
 // 根据offset处理不同类型数据
-func (r *AwdbReader) readDecode(offset uint) (interface{}, uint, error) {
+func (r *awdbReader) readDecode(offset uint) (interface{}, uint, error) {
 	dataType := intTypeData(r.buffer[offset])
 	newOffset := offset + 1
 	switch dataType {
@@ -225,7 +217,7 @@ func (r *AwdbReader) readDecode(offset uint) (interface{}, uint, error) {
 }
 
 // 处理数组数据类型
-func (r *AwdbReader) awDecodeArrary(newOffset uint) ([]interface{}, uint, error) {
+func (r *awdbReader) awDecodeArrary(newOffset uint) ([]interface{}, uint, error) {
 	dataLen := uint(r.buffer[newOffset])
 	newOffset += 1
 	var array []interface{}
@@ -239,7 +231,7 @@ func (r *AwdbReader) awDecodeArrary(newOffset uint) ([]interface{}, uint, error)
 }
 
 // 处理指针数据类型
-func (r *AwdbReader) awDecodePointer(offset uint) (interface{}, uint, error) {
+func (r *awdbReader) awDecodePointer(offset uint) (interface{}, uint, error) {
 	dataLen := uint(r.buffer[offset])
 	offset += 1
 	newOffset := offset + dataLen
@@ -250,7 +242,7 @@ func (r *AwdbReader) awDecodePointer(offset uint) (interface{}, uint, error) {
 }
 
 // 处理string数据类型
-func (r *AwdbReader) awDecodeString(newoffset uint) (string, uint, error) {
+func (r *awdbReader) awDecodeString(newoffset uint) (string, uint, error) {
 	dataLen := uint(r.buffer[newoffset])
 	newoffset += 1
 	tempOffset := newoffset + dataLen
@@ -258,7 +250,7 @@ func (r *AwdbReader) awDecodeString(newoffset uint) (string, uint, error) {
 }
 
 // 处理长string数据类型
-func (r *AwdbReader) awDecodeLString(newoffset uint) (string, uint, error) {
+func (r *awdbReader) awDecodeLString(newoffset uint) (string, uint, error) {
 	size := uint(r.buffer[newoffset])
 	newoffset += 1
 	dataLen := bytesToIntU(r.buffer[newoffset : newoffset+size])
@@ -269,7 +261,7 @@ func (r *AwdbReader) awDecodeLString(newoffset uint) (string, uint, error) {
 }
 
 // 处理无符号Int类型
-func (r *AwdbReader) awDecodeUint(newoffset uint) (uint, uint, error) {
+func (r *awdbReader) awDecodeUint(newoffset uint) (uint, uint, error) {
 	dataLen := uint(r.buffer[newoffset])
 	newoffset += 1
 	tempOffset := newoffset + dataLen
@@ -278,30 +270,30 @@ func (r *AwdbReader) awDecodeUint(newoffset uint) (uint, uint, error) {
 }
 
 // 处理有符号Int类型
-func (r *AwdbReader) awDecodeInt(newoffset uint) (int, uint, error) {
+func (r *awdbReader) awDecodeInt(newoffset uint) (int, uint, error) {
 	tempOffset := newoffset + 4
 	intValue := bytesToIntS(r.buffer[newoffset:tempOffset])
 	return intValue, tempOffset, nil
 }
 
 // 处理float数据类型
-func (r *AwdbReader) awDecodeFloat(newoffset uint) (float32, uint, error) {
+func (r *awdbReader) awDecodeFloat(newoffset uint) (float32, uint, error) {
 	tempOffset := newoffset + 4
 	floatValue := ByteToFloat32(r.buffer[newoffset:tempOffset])
 	return floatValue, tempOffset, nil
 }
 
 // 处理double数据类型
-func (r *AwdbReader) awDecodeDouble(newoffset uint) (float64, uint, error) {
+func (r *awdbReader) awDecodeDouble(newoffset uint) (float64, uint, error) {
 	tempOffset := newoffset + 8
 	doubleValue := ByteToFloat64(r.buffer[newoffset:tempOffset])
 	return doubleValue, tempOffset, nil
 }
 
 // 根据IP获取索引
-func (r *AwdbReader) searchIPPointer(ip net.IP) (uint, int, error) {
+func (r *awdbReader) searchIPPointer(ip net.IP) (uint, error) {
 	if ip == nil {
-		return 0, 0, errors.New("please check the input IP format")
+		return 0, errors.New("please check the input IP format")
 	}
 	if r.awData.IP_Version != "4_6" {
 		// 16位IPv4转4位，4_6版本中无需转换
@@ -311,22 +303,22 @@ func (r *AwdbReader) searchIPPointer(ip net.IP) (uint, int, error) {
 		}
 	}
 	if len(ip) == 16 && r.awData.IP_Version == "4" {
-		return 0, 0, fmt.Errorf("error search '%s': you attempted to search an IPv6 address in an IPv4-only database", ip.String())
+		return 0, fmt.Errorf("error search '%s': you attempted to search an IPv6 address in an IPv4-only database", ip.String())
 	}
 	if len(ip) == 4 && r.awData.IP_Version == "6" {
-		return 0, 0, fmt.Errorf("error search '%s': you attempted to search an IPv4 address in an IPv6-only database", ip.String())
+		return 0, fmt.Errorf("error search '%s': you attempted to search an IPv4 address in an IPv6-only database", ip.String())
 	}
 	// 查找树的叶节点
 	bitCount := uint(len(ip) * 8)
-	nodeIndex, prefixLength, err := r.searchTree(ip, bitCount)
+	nodeIndex, err := r.searchTree(ip, bitCount)
 	if err != nil {
-		return 0, prefixLength, err
+		return 0, err
 	}
-	return nodeIndex, prefixLength, nil
+	return nodeIndex, nil
 }
 
 // 查找树的叶节点
-func (r *AwdbReader) searchTree(ip net.IP, bitCount uint) (uint, int, error) {
+func (r *awdbReader) searchTree(ip net.IP, bitCount uint) (uint, error) {
 	nodeCount := r.awData.Node_Count
 	bytelen := r.awData.Byte_Len
 	startLen := r.startLen
@@ -339,12 +331,13 @@ func (r *AwdbReader) searchTree(ip net.IP, bitCount uint) (uint, int, error) {
 		nodeIndex = bytesToIntU(nodeByte)
 	}
 	if nodeIndex == nodeCount {
-		return 0, int(i), nil
+		fmt.Println("invalid nodeIndex in search tree")
+		return 0, nil
 	}
 	if nodeIndex > nodeCount {
-		return nodeIndex, int(i), nil
+		return nodeIndex, nil
 	}
-	return 0, int(i), errors.New("invalid nodeIndex in search tree")
+	return 0, errors.New("invalid nodeIndex in search tree")
 }
 
 // MapKeyValue 映射数据键与值，生成最终结果map
@@ -403,7 +396,7 @@ func MapKeyValue(keys []interface{}, values []interface{}) map[string]interface{
 // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 // Closefile 从虚拟内存中取消映射awdb文件并将资源返回给系统
-func (r *AwdbReader) Closefile() {
+func (r *awdbReader) Closefile() {
 	if r.hasMappedFile {
 		runtime.SetFinalizer(r, nil)
 		r.hasMappedFile = false
@@ -503,4 +496,4 @@ func (e failDatabaseError) Error() string {
 	return e.message
 }
 
-//+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
